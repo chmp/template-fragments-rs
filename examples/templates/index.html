@@ -1,0 +1,13 @@
+<html>
+    <body>
+        <h1>template fragments example</h1>
+        {% fragment items %}
+        # All items
+        {% for item in items %}
+            {% fragment item %}
+            <div>{{ item }}</div>
+            {% endfragment %}
+        {% endfor %}
+        {% endfragment %}
+    </body>
+</html>

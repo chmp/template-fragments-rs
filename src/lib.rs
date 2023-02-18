@@ -1,33 +1,104 @@
-//! Pre-process jinja-like templates with fragment directives
+//! Pre-process Jinja-like templates with fragment tags
 //!
-
+//! `template_fragments` offers a way to split a template that is annotated with
+//! fragment tags (`{% fragment NAME %}` and `{% endfragment %}`) into the
+//! fragments. For example:
+//!
+//! ```html
+//! <body>
+//! # Header
+//! {% fragment items %}
+//! {% for item in items %}
+//!     {% fragment item %}
+//!         <div>{{ item }}</div>
+//!     {% endfragment %}
+//! {% endfor %}
+//! {% endfragment %}
+//! <body>
+//! ```
+//!
+//! This template defines three fragments:
+//!
+//! - `""`: the whole template without any fragment markers
+//! - `"items"`: the template looping over all items
+//! - `"item"`: the innermost div
+//!
+//! `template_fragments` offers two ways to pre-process such a template:
+//!
+//! - [filter_template]: given a fragment name, only return those parts of the
+//!   template that belong to the fragment
+//! - [split_templates]: split a template into all its fragments and their
+//!   templates without fragment annotations
+//!
+//! # Syntax
+//!
+//! - Fragments start with `{% fragment NAME %}`
+//! - Valid fragment names are any non-whitespace character
+//! - Fragments end with `{% endfragment %}`
+//! - Fragments can occur multiple time in the document
+//! - Muliple fragments can be started in a single tag by using multiple
+//!   whitespace separated names in the start tag
+//! - Fragment tags must be contained in a single line and there must not be any
+//!   other non whitespace content on the same line
+//! - fragment name can contain any alphanumeric character and `'-'`, `'_'`.
+//! - `block` is not a valid fragment name
+//!
 use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 mod test;
 
+const DEFAULT_TAG_MARKERS: (&str, &str) = ("{%", "%}");
 
 /// Split a template path with optional fragment into the path and fragment
-/// 
+///
 /// If no fragment is found, the fragment will be a empty string
-/// 
+///
 /// ```rust
 /// # use template_fragments::split_path;
+/// #
 /// assert_eq!(split_path("index.html"), ("index.html", ""));
 /// assert_eq!(split_path("index.html#child"), ("index.html", "child"));
+///
+/// // whitespace is normalized
+/// assert_eq!(split_path("  index.html  "), ("index.html", ""));
+/// assert_eq!(split_path("  index.html  #  child  "), ("index.html", "child"));
 /// ```
 pub fn split_path(path: &str) -> (&str, &str) {
     if let Some((path, fragment)) = path.rsplit_once('#') {
-        (path, fragment)
+        (path.trim(), fragment.trim())
     } else {
-        (path, "")
+        (path.trim(), "")
+    }
+}
+
+/// Join a path with a fragment (omitting empty fragments)
+///
+/// ```rust
+/// # use template_fragments::join_path;
+/// #
+/// assert_eq!(join_path("index.html", ""), "index.html");
+/// assert_eq!(join_path("index.html", "child"), "index.html#child");
+///
+/// // whitespace is normalized
+/// assert_eq!(join_path("  index.html  ", "  "), "index.html");
+/// assert_eq!(join_path("  index.html  ", "  child  "), "index.html#child");
+/// ```
+pub fn join_path(path: &str, fragment: &str) -> String {
+    let path = path.trim();
+    let fragment = fragment.trim();
+
+    if fragment.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}#{fragment}")
     }
 }
 
 /// Process the template and return all parts for the given fragment
-/// 
+///
 /// To obtain the base template use an empty string for the fragment.
-/// 
+///
 /// ```rust
 /// # use template_fragments::filter_template;
 /// let source = concat!(
@@ -37,22 +108,22 @@ pub fn split_path(path: &str) -> (&str, &str) {
 ///     "  {% endfragment %}\n",
 ///     "<body>\n",
 /// );
-/// 
+///
 /// assert_eq!(
-///     filter_template(source, "").unwrap(), 
+///     filter_template(source, "").unwrap(),
 ///     concat!(
 ///         "<body>\n",
 ///         "    <div>{{ item }}</div>\n",
 ///         "<body>\n",
 ///     ),
 /// );
-/// 
+///
 /// assert_eq!(
-///     filter_template(source, "item").unwrap(), 
+///     filter_template(source, "item").unwrap(),
 ///     "    <div>{{ item }}</div>\n",
 /// );
 /// ```
-/// 
+///
 pub fn filter_template(src: &str, fragment: &str) -> Result<String, ErrorWithLine> {
     let mut stack: FragmentStack<'_> = Default::default();
     let mut res = String::new();
@@ -61,9 +132,32 @@ pub fn filter_template(src: &str, fragment: &str) -> Result<String, ErrorWithLin
     for (line_idx, line) in iterate_with_endings(src).enumerate() {
         last_line_idx = line_idx;
 
-        match parse_fragment_tag(line).map_err(|err| err.at(line_idx))? {
-            Some(Tag::Start(fragments)) => stack.push(fragments).map_err(|err| err.at(line_idx))?,
-            Some(Tag::End) => stack.pop().map_err(|err| err.at(line_idx))?,
+        match parse_fragment_tag(line, DEFAULT_TAG_MARKERS).map_err(|err| err.at(line_idx))? {
+            Some(Tag::Start(tag)) => stack.push(tag.fragments).map_err(|err| err.at(line_idx))?,
+            Some(Tag::End(_)) => {
+                stack.pop().map_err(|err| err.at(line_idx))?;
+            }
+            Some(Tag::StartBlock(tag)) => {
+                stack
+                    .push(HashSet::from([tag.fragment]))
+                    .map_err(|err| err.at(line_idx))?;
+                let line = format!(
+                    "{}{{% block {} %}}{}",
+                    tag.prefix,
+                    tag.fragment,
+                    get_ending(line)
+                );
+                if stack.is_active(fragment) {
+                    res.push_str(&line);
+                }
+            }
+            Some(Tag::EndBlock(tag)) => {
+                let active = stack.pop().map_err(|err| err.at(line_idx))?;
+                let line = format!("{}{{% endblock %}}{}", tag.prefix, get_ending(line));
+                if active.contains(fragment) {
+                    res.push_str(&line);
+                }
+            }
             None => {
                 if stack.is_active(fragment) {
                     res.push_str(line);
@@ -77,7 +171,7 @@ pub fn filter_template(src: &str, fragment: &str) -> Result<String, ErrorWithLin
 }
 
 /// Split the template into all fragments available
-/// 
+///
 /// The base template is return under the empty string.
 ///
 /// ```rust
@@ -92,16 +186,16 @@ pub fn filter_template(src: &str, fragment: &str) -> Result<String, ErrorWithLin
 /// let templates = split_templates(source).unwrap();
 ///
 /// assert_eq!(
-///     templates[""], 
+///     templates[""],
 ///     concat!(
 ///         "<body>\n",
 ///         "    <div>{{ item }}</div>\n",
 ///         "<body>\n",
 ///     ),
 /// );
-/// 
+///
 /// assert_eq!(
-///     templates["item"], 
+///     templates["item"],
 ///     "    <div>{{ item }}</div>\n",
 /// );
 /// ```
@@ -113,16 +207,36 @@ pub fn split_templates(src: &str) -> Result<HashMap<String, String>, ErrorWithLi
     for (line_idx, line) in iterate_with_endings(src).enumerate() {
         last_line_idx = line_idx;
 
-        match parse_fragment_tag(line).map_err(|err| err.at(line_idx))? {
-            Some(Tag::Start(fragments)) => stack.push(fragments).map_err(|err| err.at(line_idx))?,
-            Some(Tag::End) => stack.pop().map_err(|err| err.at(line_idx))?,
+        match parse_fragment_tag(line, DEFAULT_TAG_MARKERS).map_err(|err| err.at(line_idx))? {
+            Some(Tag::Start(tag)) => stack.push(tag.fragments).map_err(|err| err.at(line_idx))?,
+            Some(Tag::End(_)) => {
+                stack.pop().map_err(|err| err.at(line_idx))?;
+            }
+            Some(Tag::StartBlock(tag)) => {
+                stack
+                    .push(HashSet::from([tag.fragment]))
+                    .map_err(|err| err.at(line_idx))?;
+                let line = format!(
+                    "{}{{% block {} %}}{}",
+                    tag.prefix,
+                    tag.fragment,
+                    get_ending(line)
+                );
+                for fragment in &stack.active_fragments {
+                    push_line(&mut res, fragment, &line);
+                }
+            }
+            Some(Tag::EndBlock(tag)) => {
+                let fragments = stack.pop().map_err(|err| err.at(line_idx))?;
+                let line = format!("{}{{% endblock %}}{}", tag.prefix, get_ending(line));
+
+                for fragment in fragments {
+                    push_line(&mut res, fragment, &line);
+                }
+            }
             None => {
                 for fragment in &stack.active_fragments {
-                    if let Some(target) = res.get_mut(fragment) {
-                        target.push_str(line);
-                    } else {
-                        res.insert(fragment.to_owned(), line.to_owned());
-                    }
+                    push_line(&mut res, fragment, line);
                 }
             }
         }
@@ -132,43 +246,75 @@ pub fn split_templates(src: &str) -> Result<HashMap<String, String>, ErrorWithLi
     Ok(res)
 }
 
+fn push_line(res: &mut HashMap<String, String>, fragment: &str, line: &str) {
+    if let Some(target) = res.get_mut(fragment) {
+        target.push_str(line);
+    } else {
+        res.insert(fragment.to_owned(), line.to_owned());
+    }
+}
+
+fn get_ending(line: &str) -> &str {
+    if line.ends_with("\r\n") {
+        "\r\n"
+    } else if line.ends_with('\n') {
+        "\n"
+    } else {
+        ""
+    }
+}
+
 #[derive(Debug)]
 struct FragmentStack<'a> {
     stack: Vec<HashSet<&'a str>>,
-    active_fragments: HashSet<String>,
+    active_fragments: HashSet<&'a str>,
 }
 
 impl<'a> std::default::Default for FragmentStack<'a> {
     fn default() -> Self {
         Self {
             stack: Vec::new(),
-            active_fragments: [String::new()].into(),
+            active_fragments: HashSet::from([""]),
         }
     }
 }
 
 impl<'a> FragmentStack<'a> {
+    /// Add new fragments to the currently active fragments
     fn push(&mut self, fragments: HashSet<&'a str>) -> Result<(), Error> {
+        let mut reentrant_fragments = Vec::new();
+
         for &fragment in &fragments {
-            let not_seen = self.active_fragments.insert(fragment.to_owned());
+            let not_seen = self.active_fragments.insert(fragment);
             if !not_seen {
-                return Err(Error::ReentrantFragment);
+                reentrant_fragments.push(fragment);
             }
         }
+        if !reentrant_fragments.is_empty() {
+            return Err(Error::ReentrantFragment(sorted_fragments(
+                reentrant_fragments,
+            )));
+        }
+
         self.stack.push(fragments);
         Ok(())
     }
 
-    fn pop(&mut self) -> Result<(), Error> {
-        for fragment in self.stack.pop().ok_or(Error::UnbalancedTags)? {
+    /// Pop the last addeed fragments and return the active fragments before
+    /// this op
+    fn pop(&mut self) -> Result<HashSet<&'a str>, Error> {
+        let fragments = self.active_fragments.clone();
+        for fragment in self.stack.pop().ok_or(Error::UnbalancedEndTag)? {
             self.active_fragments.remove(fragment);
         }
-        Ok(())
+
+        Ok(fragments)
     }
 
     fn done(&self) -> Result<(), Error> {
         if !self.stack.is_empty() {
-            Err(Error::UnbalancedTags)
+            let fragments: HashSet<&str> = self.stack.iter().flatten().copied().collect();
+            Err(Error::UnclosedTag(sorted_fragments(fragments)))
         } else {
             Ok(())
         }
@@ -202,43 +348,101 @@ fn iterate_with_endings(mut s: &str) -> impl Iterator<Item = &str> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Tag<'a> {
-    Start(HashSet<&'a str>),
-    End,
+    Start(StartTag<'a>),
+    End(EndTag),
+    StartBlock(StartBlockTag<'a>),
+    EndBlock(EndBlockTag<'a>),
 }
 
-fn parse_fragment_tag(line: &str) -> Result<Option<Tag<'_>>, Error> {
-    let parts = match parse_base(line) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartTag<'a> {
+    fragments: HashSet<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartBlockTag<'a> {
+    prefix: &'a str,
+    fragment: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EndBlockTag<'a> {
+    prefix: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EndTag;
+
+fn parse_fragment_tag<'l>(
+    line: &'l str,
+    tag_markers: (&str, &str),
+) -> Result<Option<Tag<'l>>, Error> {
+    let parts = match parse_base(line, tag_markers) {
         Some(parts) => parts,
         None => return Ok(None),
     };
 
     if !parts.head.trim().is_empty() {
-        return Err(Error::LeadingContent);
+        return Err(Error::LeadingContent(parts.head.to_owned()));
     }
 
     if !parts.tail.trim().is_empty() {
-        return Err(Error::TrailingContent);
-    }
-
-    if parts.start && parts.data.trim().is_empty() {
-        return Err(Error::StartTagWithoutData);
-    }
-
-    if !parts.start && !parts.data.trim().is_empty() {
-        return Err(Error::EndTagWithData);
+        return Err(Error::TrailingContent(parts.tail.to_owned()));
     }
 
     if parts.start {
-        let fragments = parts.data.split_whitespace().collect();
-        Ok(Some(Tag::Start(fragments)))
+        let data = parts.data.trim();
+        if data.is_empty() {
+            return Err(Error::StartTagWithoutData);
+        }
+
+        let (block, data) = if let Some(data) = data.strip_prefix("block") {
+            (true, data.trim_start())
+        } else {
+            (false, data)
+        };
+
+        let fragments: HashSet<&str> = data.split_whitespace().collect();
+
+        let mut invalid_fragments = Vec::new();
+        for &fragment in &fragments {
+            if !is_valid_fragment_name(fragment) {
+                invalid_fragments.push(fragment);
+            }
+        }
+        if !invalid_fragments.is_empty() {
+            return Err(Error::InvalidFragmentName(sorted_fragments(
+                invalid_fragments,
+            )));
+        }
+
+        if !block {
+            Ok(Some(Tag::Start(StartTag { fragments })))
+        } else {
+            if fragments.len() > 1 {
+                return Err(Error::MultipleNamesBlock(sorted_fragments(fragments)));
+            } else if fragments.is_empty() {
+                return Err(Error::UnnamedBlock);
+            }
+
+            let fragment = fragments.into_iter().next().unwrap();
+            Ok(Some(Tag::StartBlock(StartBlockTag {
+                prefix: parts.head,
+                fragment,
+            })))
+        }
     } else {
-        Ok(Some(Tag::End))
+        match parts.data.trim() {
+            "" => Ok(Some(Tag::End(EndTag))),
+            "block" => Ok(Some(Tag::EndBlock(EndBlockTag { prefix: parts.head }))),
+            _ => Err(Error::EndTagWithData(parts.data.to_owned())),
+        }
     }
 }
 
-fn parse_base(line: &str) -> Option<LineParts<'_>> {
+fn parse_base<'l>(line: &'l str, tag_markers: (&str, &str)) -> Option<LineParts<'l>> {
     // "(?P<head>[^\{]*)\{%\s+(?P<tag>fragment|endfragment)(?P<data>[^%]+)%\}(?P<tail>.*)
-    let (head, line) = line.split_once("{%")?;
+    let (head, line) = line.split_once(tag_markers.0)?;
     let line = line.strip_prefix(char::is_whitespace)?;
     let line = line.trim_start();
 
@@ -252,7 +456,7 @@ fn parse_base(line: &str) -> Option<LineParts<'_>> {
     }?;
 
     let line = line.strip_prefix(char::is_whitespace)?;
-    let (data, line) = line.split_once("%}")?;
+    let (data, line) = line.split_once(tag_markers.1)?;
     let tail = line;
 
     Some(LineParts {
@@ -263,6 +467,15 @@ fn parse_base(line: &str) -> Option<LineParts<'_>> {
     })
 }
 
+fn is_valid_fragment_name(name: &str) -> bool {
+    let is_reserved = matches!(name, "block");
+    let only_valid_chars = name
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'));
+
+    !is_reserved && only_valid_chars
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LineParts<'a> {
     head: &'a str,
@@ -271,22 +484,41 @@ struct LineParts<'a> {
     tail: &'a str,
 }
 
+fn sorted_fragments<'a, I: IntoIterator<Item = &'a str>>(fragments: I) -> String {
+    let mut fragments = fragments.into_iter().collect::<Vec<_>>();
+    fragments.sort();
+
+    let mut res = String::new();
+    for fragment in fragments {
+        push_join(&mut res, fragment);
+    }
+    res
+}
+
 /// The errors that can occurs during processing
-/// 
+///
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// Content before the fragment tag 
-    LeadingContent,
+    /// Content before the fragment tag
+    LeadingContent(String),
     /// Content after the fragment tag
-    TrailingContent,
+    TrailingContent(String),
     /// Endfragment tag with fragment names
-    EndTagWithData,
+    EndTagWithData(String),
     /// Fragment tag without names
     StartTagWithoutData,
     /// Fragment tag with a fragment that is already active
-    ReentrantFragment,
-    /// Unbalanced fragment and endfragment tags
-    UnbalancedTags,
+    ReentrantFragment(String),
+    /// Tag without end tag
+    UnclosedTag(String),
+    /// End tag without corresponding start
+    UnbalancedEndTag,
+    /// Reserved fragment names (at the moment only `block`) or invalid characters
+    InvalidFragmentName(String),
+    /// A block fragment without a name
+    UnnamedBlock,
+    /// A block fragmen with too many names
+    MultipleNamesBlock(String),
 }
 
 impl Error {
@@ -298,20 +530,28 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LeadingContent => write!(f, "Error::LeadingContent"),
-            Self::TrailingContent => write!(f, "Error::TrailingContent"),
-            Self::EndTagWithData => write!(f, "Error::EndTagWithData"),
+            Self::LeadingContent(content) => write!(f, "Error::LeadingContent({content:?})"),
+            Self::TrailingContent(content) => write!(f, "Error::TrailingContent({content:?})"),
+            Self::EndTagWithData(data) => write!(f, "Error::EndTagWithData({data:?})"),
             Self::StartTagWithoutData => write!(f, "Error::StartTagWithoutData"),
-            Self::ReentrantFragment => write!(f, "Error::ReentrantFragment"),
-            Self::UnbalancedTags => write!(f, "Error::UnbalancedTags"),
+            Self::ReentrantFragment(fragments) => write!(f, "Error::ReentrantFragment({fragments}"),
+            Self::UnbalancedEndTag => write!(f, "Error::UnbalancedTags"),
+            Self::UnclosedTag(fragments) => write!(f, "Error::UnclosedTag({fragments})"),
+            Self::InvalidFragmentName(fragments) => {
+                write!(f, "Error::InvalidFragmentName({fragments}")
+            }
+            Self::UnnamedBlock => write!(f, "Error::UnnamedBlock"),
+            Self::MultipleNamesBlock(fragments) => {
+                write!(f, "Error::MultipleNamesBlock({fragments}")
+            }
         }
     }
 }
 
 impl std::error::Error for Error {}
 
-/// An error with the line it occurred on
-/// 
+/// An error with the line of the template it occurred on
+///
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorWithLine(pub usize, pub Error);
 
@@ -322,3 +562,10 @@ impl std::fmt::Display for ErrorWithLine {
 }
 
 impl std::error::Error for ErrorWithLine {}
+
+fn push_join(s: &mut String, t: &str) {
+    if !s.is_empty() {
+        s.push_str(", ");
+    }
+    s.push_str(t);
+}
