@@ -26,22 +26,27 @@
 //! `template_fragments` offers two ways to pre-process such a template:
 //!
 //! - [filter_template]: given a fragment name, only return those parts of the
-//!   template that belong to the fragment
+//!   template that belong to the fragment. This function is designed to be used
+//!   when templates are requested dynamically
 //! - [split_templates]: split a template into all its fragments and their
-//!   templates without fragment annotations
+//!   templates without fragment annotations. This function is designed to be
+//!   used when to extract all templates once at application startup
 //!
 //! # Syntax
 //!
 //! - Fragments start with `{% fragment NAME %}`
-//! - Valid fragment names are any non-whitespace character
 //! - Fragments end with `{% endfragment %}`
 //! - Fragments can occur multiple time in the document
-//! - Muliple fragments can be started in a single tag by using multiple
+//! - Multiple fragments can be started in a single tag by using multiple
 //!   whitespace separated names in the start tag
 //! - Fragment tags must be contained in a single line and there must not be any
-//!   other non whitespace content on the same line
-//! - fragment name can contain any alphanumeric character and `'-'`, `'_'`.
+//!   other non-whitespace content on the same line
+//! - Fragment name can contain any alphanumeric character and `'-'`, `'_'`.
 //! - `block` is not a valid fragment name
+//!
+//! # Example using `minijinja`
+//!
+//! ...
 //!
 use std::collections::{HashMap, HashSet};
 
@@ -172,7 +177,7 @@ pub fn filter_template(src: &str, fragment: &str) -> Result<String, ErrorWithLin
 
 /// Split the template into all fragments available
 ///
-/// The base template is return under the empty string.
+/// The base template is included as the fragment `""`.
 ///
 /// ```rust
 /// # use template_fragments::split_templates;
