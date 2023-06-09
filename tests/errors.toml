@@ -1,0 +1,61 @@
+[[test]]
+name = "reentrant fragment"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment dummy %}
+{% fragment dummy %}
+{% endfragment %}
+{% endfragment %}
+"""
+
+[[test]]
+name = "missing name"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment %}
+{% endfragment %}
+"""
+
+[[test]]
+name = "named end"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment dummy %}
+{% endfragment dummy %}
+"""
+
+[[test]]
+name = "missing end"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment example %}
+"""
+
+[[test]]
+name = "repeated ends"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment example %}
+{% endfragment %}
+{% endfragment %}
+"""
+
+[[test]]
+name = "trailing content"
+error = true
+
+fragment = [{name = ""}, {name = "dummy"}]
+source = """
+{% fragment example %} invalid
+{% endfragment %}
+"""

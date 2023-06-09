@@ -1,0 +1,195 @@
+[[test]]
+name = "example 1"
+
+source = """
+<body>
+<ul>
+{% fragment listing %}
+    {% for item in listing %}
+    <li>{{ item }}</li>
+    {% endfor %}
+{% endfragment %}
+</ul>
+{% fragment content %}
+<div>
+    {% for item in content %}
+    {% fragment content-item %}
+    <div>{{ item }}</div>
+    {% endfragment %}
+    {% endfor %}
+</div>
+{% endfragment %}
+</body>
+"""
+
+[[test.fragment]]
+name = ""
+expected = """
+<body>
+<ul>
+    {% for item in listing %}
+    <li>{{ item }}</li>
+    {% endfor %}
+</ul>
+<div>
+    {% for item in content %}
+    <div>{{ item }}</div>
+    {% endfor %}
+</div>
+</body>
+"""
+
+[[test.fragment]]
+name = "listing"
+expected = """
+    {% for item in listing %}
+    <li>{{ item }}</li>
+    {% endfor %}
+"""
+
+[[test.fragment]]
+name = "content"
+expected = """
+<div>
+    {% for item in content %}
+    <div>{{ item }}</div>
+    {% endfor %}
+</div>
+"""
+
+[[test.fragment]]
+name = "content-item"
+expected = """
+    <div>{{ item }}</div>
+"""
+
+[[test]]
+name = "example 2"
+source = """
+<body>
+    {% for item in items %}
+    {% fragment item %}
+    <div>
+        {{ item }}
+    </div>
+    {% endfragment %}
+    {% endfor %}
+<body>
+"""
+
+[[test.fragment]]
+name = ""
+expected = """
+<body>
+    {% for item in items %}
+    <div>
+        {{ item }}
+    </div>
+    {% endfor %}
+<body>
+"""
+
+[[test.fragment]]
+name = "item"
+expected = """
+    <div>
+        {{ item }}
+    </div>
+"""
+
+[[test]]
+mark = ["xfail"]
+name = "block fragments"
+source = """
+<body>
+  {% for item in items %}
+  {% fragment block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endfragment block %}
+  {% endfor %}
+<body>
+"""
+
+[[test.fragment]]
+name = ""
+expected = """
+<body>
+  {% for item in items %}
+  {% block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endblock %}
+  {% endfor %}
+<body>
+"""
+
+[[test.fragment]]
+name = "item"
+expected = """
+  {% block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endblock %}
+"""
+
+[[test]]
+mark = ["xfail"]
+
+name = "nested block fragments"
+source = """
+<body>
+  {% fragment block outer %}
+  {% for item in items %}
+  {% fragment block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endfragment block %}
+  {% endfor %}
+  {% endfragment block %}
+<body>
+"""
+
+[[test.fragment]]
+name = ""
+expected = """
+<body>
+  {% block outer %}
+  {% for item in items %}
+  {% block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endblock %}
+  {% endfor %}
+  {% endblock %}
+<body>
+"""
+
+[[test.fragment]]
+name = "item" 
+expected = """
+  {% block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endblock %}
+"""
+
+[[test.fragment]]
+name = "outer"
+expected = """
+  {% block outer %}
+  {% for item in items %}
+  {% block item %}
+    <div>
+      {{ item }}
+    </div>
+  {% endblock %}
+  {% endfor %}
+  {% endblock %}
+"""

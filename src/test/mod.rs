@@ -1,5 +1,7 @@
 mod errors;
 mod examples;
+#[rustfmt::skip]
+mod generated;
 mod internals;
 
 macro_rules! hashset {

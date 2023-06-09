@@ -1,20 +1,17 @@
-import argparse
 import os
-import pathlib
 import subprocess
+import sys
 
-self_path = pathlib.Path(__file__).parent.resolve()
-
-_md = lambda effect: lambda f: [f, effect(f)][0]
-_ps = lambda o: vars(o).setdefault("__chmp__", {})
-_as = lambda o: _ps(o).setdefault("__args__", [])
-cmd = lambda **kw: _md(lambda f: _ps(f).update(kw))
-arg = lambda *a, **k: _md(lambda f: _as(f).insert(0, (a, k)))
+__effect = lambda effect: lambda func: [func, effect(func.__dict__)][0]
+cmd = lambda **kw: __effect(lambda d: d.setdefault("@cmd", {}).update(kw))
+arg = lambda *a, **kw: __effect(lambda d: d.setdefault("@arg", []).append((a, kw)))
+self_path = __import__("pathlib").Path(__file__).parent.resolve()
 
 
 @cmd()
 @arg("--backtrace", action="store_true", default=False)
 def precommit(backtrace=False):
+    generate_tests()
     cargo("fmt")
     cargo("clippy")
     test(backtrace=backtrace)
@@ -39,8 +36,16 @@ def doc():
     cargo("doc")
 
 
+@cmd()
+def generate_tests():
+    python(self_path / "tests" / "generate_tests.py")
+
+
 def cargo(*args, **kwargs):
     return run("cargo", *args, **kwargs)
+
+def python(*args, **kwargs):
+    return run(sys.executable, *args, **kwargs)
 
 
 def run(*args, **kwargs):
@@ -52,27 +57,9 @@ def run(*args, **kwargs):
     return subprocess.run(args, **kwargs)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers()
-
-    for func in globals().values():
-        if not hasattr(func, "__chmp__"):
-            continue
-
-        desc = dict(func.__chmp__)
-        name = desc.pop("name", func.__name__.replace("_", "-"))
-        args = desc.pop("__args__", [])
-
-        subparser = subparsers.add_parser(name, **desc)
-        subparser.set_defaults(__main__=func)
-
-        for arg_args, arg_kwargs in args:
-            subparser.add_argument(*arg_args, **arg_kwargs)
-
-    args = vars(parser.parse_args())
-    return args.pop("__main__")(**args) if "__main__" in args else parser.print_help()
-
-
 if __name__ == "__main__":
-    main()
+    _sps = (_p := __import__("argparse").ArgumentParser()).add_subparsers()
+    for _f in (f for f in list(globals().values()) if hasattr(f, "@cmd")):
+        (_sp := _sps.add_parser(_f.__name__, **getattr(_f, "@cmd"))).set_defaults(_=_f)
+        [_sp.add_argument(*a, **kw) for a, kw in reversed(getattr(_f, "@arg", []))]
+    (_a := vars(_p.parse_args())).pop("_", _p.print_help)(**_a)

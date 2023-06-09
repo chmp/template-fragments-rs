@@ -1,0 +1,35 @@
+[[test]]
+name = "repeated fragment"
+source = """
+{% fragment foo bar %}
+    <common>
+{% endfragment %}
+{% fragment foo %}
+    <foo>
+{% endfragment %}
+{% fragment bar %}
+    <bar>
+{% endfragment %}
+"""
+
+[[test.fragment]]
+name = ""
+expected = """
+    <common>
+    <foo>
+    <bar>
+"""
+
+[[test.fragment]]
+name = "foo"
+expected = """
+    <common>
+    <foo>
+"""
+
+[[test.fragment]]
+name = "bar"
+expected = """
+    <common>
+    <bar>
+"""
