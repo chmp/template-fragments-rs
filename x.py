@@ -1,3 +1,4 @@
+import functools as ft
 import os
 import subprocess
 import sys
@@ -6,6 +7,7 @@ __effect = lambda effect: lambda func: [func, effect(func.__dict__)][0]
 cmd = lambda **kw: __effect(lambda d: d.setdefault("@cmd", {}).update(kw))
 arg = lambda *a, **kw: __effect(lambda d: d.setdefault("@arg", []).append((a, kw)))
 self_path = __import__("pathlib").Path(__file__).parent.resolve()
+once = lambda: lambda func: ft.lru_cache(maxsize=None)(func)
 
 
 @cmd()
@@ -20,9 +22,10 @@ def precommit(backtrace=False):
 @cmd()
 @arg("--backtrace", action="store_true", default=False)
 def test(backtrace):
+    generate_tests()
     cargo(
         "test",
-        env=dict(os.environ, RUST_BACKTRACE="1" if backtrace else "0"),
+        env=dict(os.environ, RUST_BACKTRACE=f"{int(bool(backtrace))}"),
     )
 
 @cmd()
@@ -37,6 +40,7 @@ def doc():
 
 
 @cmd()
+@once()
 def generate_tests():
     python(self_path / "tests" / "generate_tests.py")
 

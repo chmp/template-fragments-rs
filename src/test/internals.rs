@@ -29,7 +29,7 @@ mod parse_fragment_tag {
     use crate::{
         parse_fragment_tag,
         test::{assert_matches, hashset},
-        Error, StartTag, Tag, DEFAULT_TAG_MARKERS,
+        Error, StartBlockTag, StartTag, Tag, DEFAULT_TAG_MARKERS,
     };
 
     #[test]
@@ -46,6 +46,13 @@ mod parse_fragment_tag {
                 fragments: hashset!["foo", "bar"]
             })))
         );
+        assert_eq!(
+            parse_fragment_tag("  {% fragment-block foo %}", DEFAULT_TAG_MARKERS),
+            Ok(Some(Tag::StartBlock(StartBlockTag {
+                prefix: "  ",
+                fragment: "foo"
+            })))
+        );
         assert_matches!(
             parse_fragment_tag("  {% endfragment %}", DEFAULT_TAG_MARKERS),
             Ok(Some(Tag::End(_))),
@@ -58,7 +65,7 @@ mod parse_fragment_tag {
 }
 
 mod parse_base {
-    use crate::{parse_base, LineParts, DEFAULT_TAG_MARKERS};
+    use crate::{parse_base, FragmentType, LineParts, DEFAULT_TAG_MARKERS};
 
     #[test]
     fn parse_base_examples() {
@@ -66,7 +73,7 @@ mod parse_base {
             parse_base("abc{% fragment %}def", DEFAULT_TAG_MARKERS),
             Some(LineParts {
                 head: "abc",
-                start: true,
+                fragment_type: FragmentType::Start,
                 data: "",
                 tail: "def"
             })
@@ -75,7 +82,7 @@ mod parse_base {
             parse_base("abc{% endfragment %}def", DEFAULT_TAG_MARKERS),
             Some(LineParts {
                 head: "abc",
-                start: false,
+                fragment_type: FragmentType::End,
                 data: "",
                 tail: "def"
             })
@@ -84,7 +91,7 @@ mod parse_base {
             parse_base("abc{% fragment 123 456 %}def", DEFAULT_TAG_MARKERS),
             Some(LineParts {
                 head: "abc",
-                start: true,
+                fragment_type: FragmentType::Start,
                 data: "123 456 ",
                 tail: "def"
             })
@@ -93,7 +100,16 @@ mod parse_base {
             parse_base("{% fragment %}", DEFAULT_TAG_MARKERS),
             Some(LineParts {
                 head: "",
-                start: true,
+                fragment_type: FragmentType::Start,
+                data: "",
+                tail: ""
+            })
+        );
+        assert_eq!(
+            parse_base("{% fragment-block %}", DEFAULT_TAG_MARKERS),
+            Some(LineParts {
+                head: "",
+                fragment_type: FragmentType::BlockStart,
                 data: "",
                 tail: ""
             })

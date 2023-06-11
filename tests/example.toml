@@ -103,11 +103,11 @@ name = "block fragments"
 source = """
 <body>
   {% for item in items %}
-  {% fragment block item %}
+  {% fragment-block item %}
     <div>
       {{ item }}
     </div>
-  {% endfragment block %}
+  {% endfragment-block %}
   {% endfor %}
 <body>
 """
@@ -142,15 +142,15 @@ mark = ["xfail"]
 name = "nested block fragments"
 source = """
 <body>
-  {% fragment block outer %}
+  {% fragment-block outer %}
   {% for item in items %}
-  {% fragment block item %}
+  {% fragment-block item %}
     <div>
       {{ item }}
     </div>
-  {% endfragment block %}
+  {% endfragment-block %}
   {% endfor %}
-  {% endfragment block %}
+  {% endfragment-block %}
 <body>
 """
 

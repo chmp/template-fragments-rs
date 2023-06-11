@@ -28,25 +28,61 @@
 //! - [filter_template]: given a fragment name, only return those parts of the
 //!   template that belong to the fragment. This function is designed to be used
 //!   when templates are requested dynamically
-//! - [split_templates]: split a template into all its fragments and their
-//!   templates without fragment annotations. This function is designed to be
-//!   used when to extract all templates once at application startup
+//! - [split_templates]: split a template into all its fragments. This function
+//!   is designed to be used when to extract all templates once at application
+//!   startup
 //!
 //! # Syntax
 //!
-//! - Fragments start with `{% fragment NAME %}`
-//! - Fragments end with `{% endfragment %}`
-//! - Fragments can occur multiple time in the document
+//! - Fragments start with `{% fragment NAMES... %}` or `{% fragment-block NAMES
+//!   %}`
+//! - `{% fragment-block NAME %}` and `{% endfragment-block %}` define fragment
+//!   blocks: they are rendered as a block, if the fragment is included. This is
+//!   equivalent to wrapping a block with a fragment of the same name.
+//! - Fragments end with `{% endfragment %}` or `{% endfragment-block %}`
+//! - Fragments can occur multiple times in the document
 //! - Multiple fragments can be started in a single tag by using multiple
 //!   whitespace separated names in the start tag
 //! - Fragment tags must be contained in a single line and there must not be any
 //!   other non-whitespace content on the same line
-//! - Fragment name can contain any alphanumeric character and `'-'`, `'_'`.
-//! - `block` is not a valid fragment name
+//! - Fragment names can contain any alphanumeric character and `'-'`, `'_'`.
 //!
 //! # Example using `minijinja`
 //!
-//! ...
+//! One way to use fragment tags with  `minijinja` is to build a template source
+//! with the split templates at application start up like this
+//!
+//! ```
+//! # mod minijinja {
+//! #   pub struct Source;
+//! #   impl Source {
+//! #     pub fn new() -> Self { Source }
+//! #     pub fn add_template(
+//! #       &mut self,
+//! #       path: String,
+//! #       fragment: &str,
+//! #     ) -> Result<(), template_fragments::ErrorWithLine> {
+//! #       Ok(())
+//! #     }
+//! #   }
+//! # }
+//! # fn main() -> Result<(), template_fragments::ErrorWithLine> {
+//! use template_fragments::{split_templates, join_path};
+//!
+//! let mut source = minijinja::Source::new();
+//!
+//! for (path, template) in [("index.html", include_str!("../examples/templates/index.html"))] {
+//!     for (fragment_name, template_fragment) in split_templates(template)? {
+//!         source.add_template(join_path(path, &fragment_name), &template_fragment)?;
+//!     }
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Note the different fragments can be rendered by requesting the relevant
+//! template, e.g., `env.get_template("index.html")` or
+//! `env.get_template("index.html#fragment")`.
 //!
 use std::collections::{HashMap, HashSet};
 
@@ -395,52 +431,56 @@ fn parse_fragment_tag<'l>(
         return Err(Error::TrailingContent(parts.tail.to_owned()));
     }
 
-    if parts.start {
-        let data = parts.data.trim();
-        if data.is_empty() {
-            return Err(Error::StartTagWithoutData);
-        }
-
-        let (block, data) = if let Some(data) = data.strip_prefix("block") {
-            (true, data.trim_start())
-        } else {
-            (false, data)
-        };
-
-        let fragments: HashSet<&str> = data.split_whitespace().collect();
-
-        let mut invalid_fragments = Vec::new();
-        for &fragment in &fragments {
-            if !is_valid_fragment_name(fragment) {
-                invalid_fragments.push(fragment);
-            }
-        }
-        if !invalid_fragments.is_empty() {
-            return Err(Error::InvalidFragmentName(sorted_fragments(
-                invalid_fragments,
-            )));
-        }
-
-        if !block {
-            Ok(Some(Tag::Start(StartTag { fragments })))
-        } else {
-            if fragments.len() > 1 {
-                return Err(Error::MultipleNamesBlock(sorted_fragments(fragments)));
-            } else if fragments.is_empty() {
-                return Err(Error::UnnamedBlock);
+    match parts.fragment_type {
+        FragmentType::Start | FragmentType::BlockStart => {
+            let data = parts.data.trim();
+            if data.is_empty() {
+                return Err(Error::StartTagWithoutData);
             }
 
-            let fragment = fragments.into_iter().next().unwrap();
-            Ok(Some(Tag::StartBlock(StartBlockTag {
-                prefix: parts.head,
-                fragment,
-            })))
+            let block = matches!(parts.fragment_type, FragmentType::BlockStart);
+
+            let fragments: HashSet<&str> = data.split_whitespace().collect();
+
+            let mut invalid_fragments = Vec::new();
+            for &fragment in &fragments {
+                if !is_valid_fragment_name(fragment) {
+                    invalid_fragments.push(fragment);
+                }
+            }
+            if !invalid_fragments.is_empty() {
+                return Err(Error::InvalidFragmentName(sorted_fragments(
+                    invalid_fragments,
+                )));
+            }
+
+            if !block {
+                Ok(Some(Tag::Start(StartTag { fragments })))
+            } else {
+                if fragments.len() > 1 {
+                    return Err(Error::MultipleNamesBlock(sorted_fragments(fragments)));
+                } else if fragments.is_empty() {
+                    return Err(Error::UnnamedBlock);
+                }
+
+                let fragment = fragments.into_iter().next().unwrap();
+                Ok(Some(Tag::StartBlock(StartBlockTag {
+                    prefix: parts.head,
+                    fragment,
+                })))
+            }
         }
-    } else {
-        match parts.data.trim() {
-            "" => Ok(Some(Tag::End(EndTag))),
-            "block" => Ok(Some(Tag::EndBlock(EndBlockTag { prefix: parts.head }))),
-            _ => Err(Error::EndTagWithData(parts.data.to_owned())),
+        FragmentType::End => {
+            if !parts.data.trim().is_empty() {
+                return Err(Error::EndTagWithData(parts.data.to_owned()));
+            }
+            Ok(Some(Tag::End(EndTag)))
+        }
+        FragmentType::BlockEnd => {
+            if !parts.data.trim().is_empty() {
+                return Err(Error::EndTagWithData(parts.data.to_owned()));
+            }
+            Ok(Some(Tag::EndBlock(EndBlockTag { prefix: parts.head })))
         }
     }
 }
@@ -449,16 +489,21 @@ fn parse_base<'l>(line: &'l str, tag_markers: (&str, &str)) -> Option<LineParts<
     // "(?P<head>[^\{]*)\{%\s+(?P<tag>fragment|endfragment)(?P<data>[^%]+)%\}(?P<tail>.*)
     let (head, line) = line.split_once(tag_markers.0)?;
     let line = line.strip_prefix(char::is_whitespace)?;
-    let line = line.trim_start();
 
-    #[allow(clippy::manual_map)]
-    let (start, line) = if let Some(line) = line.strip_prefix("fragment") {
-        Some((true, line))
-    } else if let Some(line) = line.strip_prefix("endfragment") {
-        Some((false, line))
-    } else {
-        None
-    }?;
+    use FragmentType as T;
+
+    // NOTE: the order is important: the -block suffixes must come first
+    let (fragment_type, line) = None
+        .or_else(|| {
+            line.strip_prefix("fragment-block")
+                .map(|l| (T::BlockStart, l))
+        })
+        .or_else(|| {
+            line.strip_prefix("endfragment-block")
+                .map(|l| (T::BlockEnd, l))
+        })
+        .or_else(|| line.strip_prefix("fragment").map(|l| (T::Start, l)))
+        .or_else(|| line.strip_prefix("endfragment").map(|l| (T::End, l)))?;
 
     let line = line.strip_prefix(char::is_whitespace)?;
     let (data, line) = line.split_once(tag_markers.1)?;
@@ -466,7 +511,7 @@ fn parse_base<'l>(line: &'l str, tag_markers: (&str, &str)) -> Option<LineParts<
 
     Some(LineParts {
         head,
-        start,
+        fragment_type,
         data,
         tail,
     })
@@ -484,9 +529,17 @@ fn is_valid_fragment_name(name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LineParts<'a> {
     head: &'a str,
-    start: bool,
+    fragment_type: FragmentType,
     data: &'a str,
     tail: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FragmentType {
+    Start,
+    End,
+    BlockStart,
+    BlockEnd,
 }
 
 fn sorted_fragments<'a, I: IntoIterator<Item = &'a str>>(fragments: I) -> String {
@@ -500,13 +553,13 @@ fn sorted_fragments<'a, I: IntoIterator<Item = &'a str>>(fragments: I) -> String
     res
 }
 
-/// The errors that can occurs during processing
+/// Errors that can occurs during processing
 ///
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// Content before the fragment tag
+    /// Non-whitespace content before the fragment tag
     LeadingContent(String),
-    /// Content after the fragment tag
+    /// None-whitespace content after the fragment tag
     TrailingContent(String),
     /// Endfragment tag with fragment names
     EndTagWithData(String),

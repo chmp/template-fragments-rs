@@ -184,11 +184,11 @@ fn block_fragments() {
     let template = concat!(
         "<body>\n",
         "  {% for item in items %}\n",
-        "  {% fragment block item %}\n",
+        "  {% fragment-block item %}\n",
         "    <div>\n",
         "      {{ item }}\n",
         "    </div>\n",
-        "  {% endfragment block %}\n",
+        "  {% endfragment-block %}\n",
         "  {% endfor %}\n",
         "<body>\n",
     );
@@ -222,15 +222,15 @@ fn block_fragments() {
 fn nested_block_fragments() {
     let template = concat!(
         "<body>\n",
-        "  {% fragment block outer %}\n",
+        "  {% fragment-block outer %}\n",
         "  {% for item in items %}\n",
-        "  {% fragment block item %}\n",
+        "  {% fragment-block item %}\n",
         "    <div>\n",
         "      {{ item }}\n",
         "    </div>\n",
-        "  {% endfragment block %}\n",
+        "  {% endfragment-block %}\n",
         "  {% endfor %}\n",
-        "  {% endfragment block %}\n",
+        "  {% endfragment-block %}\n",
         "<body>\n",
     );
 
