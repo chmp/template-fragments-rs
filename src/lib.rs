@@ -1,8 +1,8 @@
 //! Pre-process Jinja-like templates with fragment tags
 //!
 //! `template_fragments` offers a way to split a template that is annotated with
-//! fragment tags (`{% fragment NAME %}` and `{% endfragment %}`) into the
-//! fragments. For example:
+//! fragment tags (`{% fragment NAME %}`, `{% endfragment %}`) into fragments.
+//! For example:
 //!
 //! ```html
 //! <body>
