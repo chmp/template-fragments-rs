@@ -42,7 +42,7 @@ def doc():
 @cmd()
 @once()
 def generate_tests():
-    python(self_path / "tests" / "generate_tests.py")
+    python(self_path / "specs" / "generate_tests.py")
 
 
 def cargo(*args, **kwargs):
