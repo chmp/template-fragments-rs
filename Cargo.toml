@@ -2,6 +2,10 @@
 name = "template-fragments"
 version = "0.2.0"
 edition = "2021"
+description = "template-fragments for jinja-like engines"
+readme = "Readme.md"
+license = "MIT"
+repository = "https://github.com/chmp/template-fragments-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
